@@ -9,6 +9,9 @@
 # Needs: gh (authenticated, or GH_TOKEN), curl.
 # Env:   ICOP_REPO (default asayed18/icop), CASK_PATH (default Casks/icop.rb),
 #        ICOP_DOWNLOAD_BASE to read archives from another base URL (tests).
+#
+# Releases before 0.1.7 are skipped: their macOS archives carry a .so plugin
+# that VLC for macOS never loads and no bundled installer.
 
 set -eu
 
@@ -16,12 +19,27 @@ repo=${ICOP_REPO:-asayed18/icop}
 cask_path=${CASK_PATH:-Casks/icop.rb}
 download_base=${ICOP_DOWNLOAD_BASE:-https://github.com/$repo/releases/download}
 
+min_version=0.1.7
+
 die() {
     printf 'render_cask: %s\n' "$*" >&2
     exit 1
 }
 
+# True when version $1 >= $2 (numeric dotted versions).
+version_ge() {
+    printf '%s\n%s\n' "$1" "$2" | awk -F. '
+        NR == 1 { for (i = 1; i <= NF; i++) a[i] = $i; n = NF; next }
+        { m = NF > n ? NF : n
+          for (i = 1; i <= m; i++) {
+              if ((a[i] + 0) > ($i + 0)) exit 0
+              if ((a[i] + 0) < ($i + 0)) exit 1
+          }
+          exit 0 }'
+}
+
 has_mac_assets() {
+    version_ge "$1" "$min_version" || return 1
     assets=$(gh release view "v$1" --repo "$repo" --json assets \
         --jq '.assets[].name' 2>/dev/null) || return 1
     for arch in arm64 x86_64; do
@@ -44,7 +62,9 @@ if [ -z "$version" ]; then
         fi
     done
     [ -n "$version" ] ||
-        die "no published $repo release ships both macOS archives yet"
+        die "no published $repo release >= $min_version ships both macOS archives yet"
+elif ! version_ge "$version" "$min_version"; then
+    die "v$version predates working macOS packages (need >= $min_version)"
 elif [ -z "${ICOP_DOWNLOAD_BASE:-}" ]; then
     has_mac_assets "$version" ||
         die "v$version is not published with both macOS archives"

@@ -52,9 +52,14 @@ jobs:
             echo "version=$(sed -n 's/^  version "\(.*\)"/\1/p' Casks/icop.rb)" >> "$GITHUB_OUTPUT"
           fi
 
+      # Link rather than `brew tap <path>`: tapping clones committed files
+      # only, and the rendered cask is not committed yet.
       - name: Tap this checkout
         if: steps.render.outputs.changed == 'true'
-        run: brew tap asayed18/icop "$GITHUB_WORKSPACE"
+        run: |
+          taps="$(brew --repository)/Library/Taps/asayed18"
+          mkdir -p "$taps"
+          ln -sfn "$GITHUB_WORKSPACE" "$taps/homebrew-icop"
 
       - name: Lint cask
         if: steps.render.outputs.changed == 'true'
