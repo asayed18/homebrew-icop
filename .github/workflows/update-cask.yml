@@ -1,0 +1,84 @@
+name: Update icop cask
+
+# Renders Casks/icop.rb for the newest published icop release that ships both
+# macOS archives. asayed18/icop dispatches icop-release when it publishes a
+# release; the schedule catches releases if that dispatch is missing.
+on:
+  repository_dispatch:
+    types: [icop-release]
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'icop version to publish (e.g. 0.1.7); empty = newest'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-cask
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render cask
+        id: render
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.event.client_payload.version || inputs.version }}
+        run: |
+          if ! out=$(sh scripts/render_cask.sh "$VERSION" 2>&1); then
+            echo "$out"
+            if [ -z "$VERSION" ] && echo "$out" | grep -q 'no published'; then
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            exit 1
+          fi
+          echo "$out"
+          git add -N Casks/icop.rb
+          if git diff --quiet -- Casks/icop.rb; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "version=$(sed -n 's/^  version "\(.*\)"/\1/p' Casks/icop.rb)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tap this checkout
+        if: steps.render.outputs.changed == 'true'
+        run: brew tap asayed18/icop "$GITHUB_WORKSPACE"
+
+      - name: Lint cask
+        if: steps.render.outputs.changed == 'true'
+        run: |
+          brew style --cask asayed18/icop/icop
+          brew audit --cask --online asayed18/icop/icop
+
+      # Installing writes into VLC.app, which macOS may refuse on hosted
+      # runners (App Management). Report it without blocking the update.
+      - name: Install and uninstall test
+        if: steps.render.outputs.changed == 'true'
+        continue-on-error: true
+        run: |
+          brew install --cask vlc
+          brew install --cask asayed18/icop/icop
+          ls /Applications/VLC.app/Contents/MacOS/plugins/video_filter/libicop_plugin.dylib
+          brew uninstall --cask icop
+          test ! -e /Applications/VLC.app/Contents/MacOS/plugins/video_filter/libicop_plugin.dylib
+
+      - name: Commit
+        if: steps.render.outputs.changed == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Casks/icop.rb
+          git commit -m "icop ${{ steps.render.outputs.version }}"
+          git push
