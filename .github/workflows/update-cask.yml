@@ -18,6 +18,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # brew audit --online and brew install query the GitHub API; unauthenticated
+  # calls share the runner IP's 60 requests/hour and fail intermittently.
+  HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
+
 concurrency:
   group: update-cask
   cancel-in-progress: false
